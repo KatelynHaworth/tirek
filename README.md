@@ -7,6 +7,13 @@ worker threads. Each one of those threads is responsible for producing requests 
 
 **NOTE**: This is defiantly **NOT** a production tool and should not be used for benchmarking
  
+Installation
+============
+
+Simply install via the Go utility
+
+``go get -u github.com/LiamHaworth/tirek``
+ 
 Usage
 =====
 
@@ -23,6 +30,16 @@ Usage of ./tirek:
   -workers int
     	Sets the number of worker threads to use (default 5)
 ```
+
+Contributing
+=============
+
+To contribute to this project, please follow this guide:
+
+  1. Create an issue detailing your planned contribution
+  2. Fork this repository and implement your contribution
+  3. Create a pull request linking back to the issue
+  4. Await approval and merging
 
 Licence and Copyright
 =====================
