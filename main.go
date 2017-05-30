@@ -59,10 +59,12 @@ func main() {
 	}
 
 	fmt.Printf(
-		"Total Requests: %d (Errors %d) | Average Response Time: %s",
+		"Total Requests: %d (Errors %d / %.02f%%) | Average Response Time: %s | Requests Per Second: %.02f\n",
 		len(totalResults),
 		totalErrors,
+		(float64(totalErrors) / float64(len(totalResults))) * 100,
 		totalTime / time.Duration(len(totalResults)),
+		float64((len(totalResults) - totalErrors)) / float64(*duration / time.Second),
 	)
 }
 
@@ -82,14 +84,16 @@ func NewAttacker(rate int) *Attacker {
 }
 
 func (self *Attacker) Start() {
-	ticker := time.NewTicker(time.Duration(time.Second / time.Duration(50)))
+	ticker := time.NewTicker(time.Duration(time.Second / time.Duration(self.rate)))
 
 	attack:
 	for {
 		select {
 		case tm := <- ticker.C:
-			_, err := dns.Exchange(getRandomQuestion(), *target)
+			resp, err := dns.Exchange(getRandomQuestion(), *target)
 			if err != nil {
+				self.errors++
+			} else if resp.Rcode != dns.RcodeSuccess {
 				self.errors++
 			}
 			self.results = append(self.results, time.Since(tm))
@@ -104,7 +108,7 @@ func (self *Attacker) Start() {
 func getRandomQuestion() *dns.Msg {
 	if list == nil {
 		list = []string{}
-		resp, _ := http.Get("https://raw.githubusercontent.com/opendns/public-domain-lists/master/opendns-random-domains.txt")
+		resp, _ := http.Get("https://raw.githubusercontent.com/opendns/public-domain-lists/master/opendns-top-domains.txt")
 		reader := bufio.NewReader(resp.Body)
 		for {
 			line, _, err := reader.ReadLine()
