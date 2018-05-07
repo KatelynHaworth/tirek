@@ -3,124 +3,100 @@ package main
 import (
 	"bufio"
 	"flag"
-	"fmt"
-	"math/rand"
 	"net/http"
 	"runtime"
 	"time"
 
-	"github.com/miekg/dns"
+	"fmt"
+	"log"
+	"io"
+	"strings"
 )
 
 var (
-	cpus		*int		= flag.Int("cpus", runtime.NumCPU(), "Sets the number of CPUs to be used during test")
+	listSource = flag.String("list", "https://raw.githubusercontent.com/opendns/public-domain-lists/master/opendns-top-domains.txt", "Sets the list of domains to use in requests")
+	cpus = flag.Int("cpus", runtime.NumCPU(), "Sets the number of CPUs to be used during test")
+	workerCount = flag.Int("workers", 5, "Sets the number of worker threads to use")
+	rate = flag.Int("rate", 50, "Sets the number of requests to attempt per second")
+	duration = flag.Duration("duration", 1 * time.Minute, "Sets how long the attack should last")
+	target = flag.String("target", "127.0.0.1:53", "Sets the DNS server to target")
 
-	workers		*int		= flag.Int("workers", 5, "Sets the number of worker threads to use")
-
-	rate		*int		= flag.Int("rate", 50, "Sets the number of requests to attempt per second")
-
-	duration	*time.Duration	= flag.Duration("duration", 1 * time.Minute, "Sets how long the attack should last")
-
-	target		*string		= flag.String("target", "127.0.0.1:53", "Sets the DNS server to target")
-
-	list		[]string
+	domainList []string
 )
 
 func main() {
 	flag.Parse()
-	getRandomQuestion() // Populate list before the workers start
+	if err := loadDomainList(); err != nil {
+		log.Fatal(err)
+	}
+
+	stats := new(Statistics)
 
 	runtime.GOMAXPROCS(*cpus)
-	workers := make([]*Attacker, *workers)
+	workers := make([]*Worker, *workerCount)
 	for i := range workers {
-		workers[i] = NewAttacker(*rate)
+		workers[i] = &Worker{
+			Stats:      stats,
+			Rate:       *rate,
+			NameServer: *target,
+			Domains:    domainList,
+		}
 	}
 
+	fmt.Println("CPU Threads....................:", *cpus)
+	fmt.Println("Workers........................:", *workerCount)
+	fmt.Println("Rate (per second per worker)...:", *rate)
+	fmt.Println("Duration.......................:", *duration)
+	fmt.Println("Target Name Server.............:", *target)
+	fmt.Println("Available domains..............:", len(domainList))
+	fmt.Println()
+
+	stats.Start()
 	for _, worker := range workers {
-		go worker.Start()
+		worker.Start()
 	}
 
-	<- time.After(*duration)
+	timeUp := time.After(*duration)
+	interval := time.NewTicker(time.Second / 16)
 
-	for _, worker := range workers {
-		worker.exit <- true
-	}
-
-	totalResults := []time.Duration{}
-	totalErrors := 0
-	for _, worker := range workers {
-		totalResults = append(totalResults, worker.results...)
-		totalErrors += worker.errors
-	}
-
-	totalTime := time.Duration(0)
-	for _, result := range totalResults {
-		totalTime += result
-	}
-
-	fmt.Printf(
-		"Total Requests: %d (Errors %d / %.02f%%) | Average Response Time: %s | Requests Per Second: %.02f\n",
-		len(totalResults),
-		totalErrors,
-		(float64(totalErrors) / float64(len(totalResults))) * 100,
-		totalTime / time.Duration(len(totalResults)),
-		float64((len(totalResults) - totalErrors)) / float64(*duration / time.Second),
-	)
-}
-
-type Attacker struct {
-	rate		int
-	results		[]time.Duration
-	errors		int
-	exit		chan bool
-}
-
-func NewAttacker(rate int) *Attacker {
-	attacker := new(Attacker)
-	attacker.rate = rate
-	attacker.exit = make(chan bool, 1)
-	attacker.errors = 0
-	return attacker
-}
-
-func (self *Attacker) Start() {
-	ticker := time.NewTicker(time.Duration(time.Second / time.Duration(self.rate)))
-
-	attack:
 	for {
 		select {
-		case tm := <- ticker.C:
-			resp, err := dns.Exchange(getRandomQuestion(), *target)
-			if err != nil {
-				self.errors++
-			} else if resp.Rcode != dns.RcodeSuccess {
-				self.errors++
-			}
-			self.results = append(self.results, time.Since(tm))
+		case <- interval.C:
+			fmt.Print(stats, "                    \r")
 
-		case <- self.exit:
-			ticker.Stop()
-			break attack
+		case <- timeUp:
+			interval.Stop()
+			for _, worker := range workers {
+				worker.Stop()
+			}
+
+			fmt.Println()
+			return
 		}
 	}
 }
 
-func getRandomQuestion() *dns.Msg {
-	if list == nil {
-		list = []string{}
-		resp, _ := http.Get("https://raw.githubusercontent.com/opendns/public-domain-lists/master/opendns-top-domains.txt")
-		reader := bufio.NewReader(resp.Body)
-		for {
-			line, _, err := reader.ReadLine()
-			if err != nil {
-				break
-			}
-			list = append(list, string(line))
+// loadDomainList will fetch the list of
+// domain names and parse it into a slice
+// of FQDNs ready for using in requests
+func loadDomainList() error {
+	resp, err := http.Get(*listSource)
+	if err != nil {
+		return fmt.Errorf("retreive domain list: %s", err)
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil && err == io.EOF {
+			break
+		}else if err != nil {
+			return fmt.Errorf("read line from list: %s", err)
 		}
-		resp.Body.Close()
+
+		domainList = append(domainList, strings.TrimSpace(line)+".")
 	}
 
-	msg := new(dns.Msg)
-	msg.SetQuestion(list[rand.Intn(len(list))] + ".", dns.TypeA)
-	return msg
+	return nil
 }
