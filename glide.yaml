@@ -1,3 +1,0 @@
-package: github.com/LiamHaworth/tirek
-import:
-- package: github.com/miekg/dns

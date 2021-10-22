@@ -50,7 +50,7 @@ workerLoop:
 			case err != nil:
 				fallthrough
 
-			case resp.Rcode != dns.RcodeSuccess:
+			case resp.Rcode == dns.RcodeServerFailure:
 				worker.Stats.IncrementFailedRequests()
 
 			default:
